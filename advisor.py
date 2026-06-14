@@ -365,11 +365,11 @@ def export_report_to_excel(df, stats, stability, patterns, advice):
     r3 = 1
     
     group_defs = [
-        ('按月龄阶段', 'age_group', ['夜间睡眠(小时)', '小睡(小时)', '总睡眠(小时)', '夜醒次数']),
-        ('按入睡时段', 'bedtime_group', ['夜间睡眠(小时)', '总睡眠(小时)', '夜醒次数']),
-        ('按小睡次数', 'naps_group', ['夜间睡眠(小时)', '总睡眠(小时)', '夜醒次数']),
-        ('按奶量区间', 'milk_group', ['夜间睡眠(小时)', '总睡眠(小时)', '夜醒次数']),
-        ('按喂养方式', 'feeding_type', ['夜间睡眠(小时)', '总睡眠(小时)', '夜醒次数']),
+        ('按月龄阶段', 'age_group', ['night_sleep_hours', 'nap_hours', 'total_sleep_hours', 'nightwakings']),
+        ('按入睡时段', 'bedtime_group', ['night_sleep_hours', 'total_sleep_hours', 'nightwakings']),
+        ('按小睡次数', 'naps_group', ['night_sleep_hours', 'total_sleep_hours', 'nightwakings']),
+        ('按奶量区间', 'milk_group', ['night_sleep_hours', 'total_sleep_hours', 'nightwakings']),
+        ('按喂养方式', 'feeding_type', ['night_sleep_hours', 'total_sleep_hours', 'nightwakings']),
     ]
     
     eng_to_cn = {

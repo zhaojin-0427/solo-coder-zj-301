@@ -44,9 +44,14 @@ def parse_time_to_minutes(time_str):
         return np.nan
     try:
         if isinstance(time_str, (int, float)):
-            if 0 <= time_str <= 24:
-                return int(time_str * 60)
-            return int(time_str)
+            h = float(time_str)
+            if h < 0:
+                return int(h)
+            if h > 24:
+                return int(h)
+            if h >= 20:
+                return int((h - 24) * 60)
+            return int(h * 60)
         time_str = str(time_str).strip()
         if ':' in time_str:
             parts = time_str.split(':')
@@ -67,11 +72,9 @@ def parse_time_to_minutes(time_str):
 def minutes_to_time_display(minutes):
     if pd.isna(minutes):
         return ''
-    if minutes < 0:
-        h = 24 + int(minutes / 60)
-    else:
-        h = int(minutes / 60)
-    m = int(minutes % 60)
+    total = int(minutes) % 1440
+    h = total // 60
+    m = total % 60
     return f"{h:02d}:{m:02d}"
 
 
@@ -154,6 +157,22 @@ def categorize_nightwaking_period(nw_str):
     if pd.isna(nw_str) or nw_str == '' or nw_str == '无':
         return '无夜醒'
     try:
+        periods = get_all_nw_periods(nw_str)
+        if not periods:
+            return '无夜醒'
+        priority_order = ['凌晨(04-06)', '深夜(01-04)', '清晨(06+)', '入睡后(22-01)']
+        for p in priority_order:
+            if p in periods:
+                return p
+        return periods[0]
+    except:
+        return '无夜醒'
+
+
+def get_all_nw_periods(nw_str):
+    if pd.isna(nw_str) or nw_str == '' or nw_str == '无':
+        return []
+    try:
         nw_str = str(nw_str)
         periods = []
         for t in nw_str.replace('，', ',').split(','):
@@ -176,11 +195,9 @@ def categorize_nightwaking_period(nw_str):
                 periods.append('凌晨(04-06)')
             elif h >= 6:
                 periods.append('清晨(06+)')
-        if not periods:
-            return '无夜醒'
-        return max(set(periods), key=periods.count)
+        return periods
     except:
-        return '无夜醒'
+        return []
 
 
 def load_csv(uploaded_file):
@@ -266,6 +283,13 @@ def preprocess_data(df):
     df['naps_group'] = df['naps_count'].apply(categorize_naps_count)
     df['milk_group'] = df['milk_amount_ml'].apply(categorize_milk)
     df['nw_period_group'] = df['nightwaking_periods'].apply(categorize_nightwaking_period)
+    df['nw_periods_list'] = df['nightwaking_periods'].apply(get_all_nw_periods)
+    df['has_early_morning'] = df['nw_periods_list'].apply(
+        lambda x: any(p in ['凌晨(04-06)', '清晨(06+)'] for p in x)
+    )
+    df['has_late_night'] = df['nw_periods_list'].apply(
+        lambda x: any(p in ['入睡后(22-01)', '深夜(01-04)'] for p in x)
+    )
     
     def get_last_nap_info(row):
         return row.get('last_nap_end', np.nan)

@@ -95,12 +95,25 @@ def plot_nightwaking_heatmap(df):
     if len(df) == 0:
         return go.Figure()
     
-    heatmap_data = []
-    periods_order = ['入睡后(22-01)', '深夜(01-04)', '凌晨(04-06)', '清晨(06+)', '无夜醒']
+    periods_order = ['入睡后(22-01)', '深夜(01-04)', '凌晨(04-06)', '清晨(06+)']
     
-    period_counts = df.groupby(['date', 'nw_period_group']).size().reset_index(name='count')
+    records = []
+    for _, row in df.iterrows():
+        d = row['date']
+        periods = row.get('nw_periods_list', [])
+        if not periods:
+            continue
+        period_counts = {}
+        for p in periods:
+            period_counts[p] = period_counts.get(p, 0) + 1
+        for p in periods_order:
+            records.append({'date': d, 'period': p, 'count': period_counts.get(p, 0)})
     
-    pivot = period_counts.pivot(index='date', columns='nw_period_group', values='count').fillna(0)
+    if not records:
+        return go.Figure()
+    
+    heatmap_df = pd.DataFrame(records)
+    pivot = heatmap_df.pivot(index='date', columns='period', values='count').fillna(0)
     for p in periods_order:
         if p not in pivot.columns:
             pivot[p] = 0
@@ -118,12 +131,12 @@ def plot_nightwaking_heatmap(df):
             [1.0, '#DC2626']
         ],
         showscale=True,
-        colorbar=dict(title='发生天数'),
+        colorbar=dict(title='夜醒次数'),
         hovertemplate='日期: %{x}<br>时段: %{y}<br>次数: %{z}<extra></extra>'
     ))
     
     fig.update_layout(
-        title='夜醒时段分布热力图',
+        title='夜醒时段分布热力图（按时段独立统计）',
         height=320,
         template='plotly_white',
         yaxis=dict(autorange='reversed')

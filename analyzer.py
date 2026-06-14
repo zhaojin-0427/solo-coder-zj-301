@@ -107,31 +107,50 @@ def detect_patterns(df):
                               f'建议将最后一觉结束时间控制在15:00前。'
                 })
     
-    valid_bt = df.dropna(subset=['bedtime_std_7d', 'nightwakings_7d_avg'])
+    pattern_found = False
+    
+    valid_bt = df.dropna(subset=['bedtime_std_7d', 'nightwakings_7d_avg', 'has_early_morning'])
     if len(valid_bt) >= 5:
-        high_var = valid_bt[valid_bt['bedtime_std_7d'] >= 60]
-        low_var = valid_bt[valid_bt['bedtime_std_7d'] < 60]
+        high_var = valid_bt[valid_bt['bedtime_std_7d'] >= 45]
+        low_var = valid_bt[valid_bt['bedtime_std_7d'] < 45]
         if len(high_var) >= 2 and len(low_var) >= 2:
-            high_avg = high_var['nightwakings_7d_avg'].mean()
-            low_avg = low_var['nightwakings_7d_avg'].mean()
+            high_em_pct = high_var['has_early_morning'].mean() * 100
+            low_em_pct = low_var['has_early_morning'].mean() * 100
+            if high_em_pct > low_em_pct + 15 and high_em_pct > 30:
+                patterns.append({
+                    'type': 'warning',
+                    'title': '入睡时间波动大时凌晨醒来更频繁',
+                    'detail': f'入睡时间7日滚动标准差≥45分钟的时期，凌晨(04-06点后)醒来的天数占{high_em_pct:.0f}%，'
+                              f'比稳定时期({low_em_pct:.0f}%)高出{high_em_pct-low_em_pct:.0f}个百分点。'
+                              f'建议固定入睡时间，波动控制在±30分钟内。'
+                })
+                pattern_found = True
+    
+    if not pattern_found and len(df) >= 7 and df['has_early_morning'].sum() >= 2:
+        valid_days = df.dropna(subset=['bedtime_minutes', 'has_early_morning'])
+        if len(valid_days) >= 7:
+            bt_mean = valid_days['bedtime_minutes'].mean()
+            valid_days = valid_days.copy()
+            valid_days['bt_deviation'] = (valid_days['bedtime_minutes'] - bt_mean).abs()
             
-            df_cp = df.copy()
-            df_cp['is_early_morning'] = df_cp['nw_period_group'].apply(
-                lambda x: 1 if x in ['凌晨(04-06)', '清晨(06+)'] else 0
-            )
-            high_days = df_cp.iloc[high_var.index]
-            low_days = df_cp.iloc[low_var.index]
-            if len(high_days) > 0 and len(low_days) > 0:
-                high_em_pct = high_days['is_early_morning'].mean() * 100
-                low_em_pct = low_days['is_early_morning'].mean() * 100
-                if high_em_pct > low_em_pct + 15:
+            dev_median = valid_days['bt_deviation'].median()
+            high_dev = valid_days[valid_days['bt_deviation'] >= dev_median]
+            low_dev = valid_days[valid_days['bt_deviation'] < dev_median]
+            
+            if len(high_dev) >= 3 and len(low_dev) >= 3:
+                high_em = high_dev['has_early_morning'].mean() * 100
+                low_em = low_dev['has_early_morning'].mean() * 100
+                
+                if high_em > low_em + 20 and high_em > 30:
                     patterns.append({
                         'type': 'warning',
                         'title': '入睡时间波动大时凌晨醒来更频繁',
-                        'detail': f'入睡时间标准差≥60分钟的时期，凌晨(04-06点)醒来的占比为{high_em_pct:.0f}%，'
-                                  f'比稳定时期({low_em_pct:.0f}%)高出{high_em_pct-low_em_pct:.0f}个百分点。'
-                                  f'建议固定入睡时间，波动控制在30分钟内。'
+                        'detail': f'入睡偏差较大的日子（平均偏离均值{high_dev["bt_deviation"].mean():.0f}分钟），'
+                                  f'凌晨夜醒占比{high_em:.0f}%，'
+                                  f'比偏差较小的日子({low_em:.0f}%)高出{high_em-low_em:.0f}个百分点。'
+                                  f'固定入睡时间能有效减少凌晨醒来。'
                     })
+                    pattern_found = True
     
     if 'naps_count' in df.columns and 'nightwakings' in df.columns:
         nap_groups = df.groupby('naps_group')['nightwakings'].mean()
