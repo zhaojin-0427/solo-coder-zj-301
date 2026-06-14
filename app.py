@@ -19,6 +19,7 @@ from visualizer import (
     plot_milk_analysis, plot_age_comparison, plot_weekly_pattern
 )
 from advisor import generate_sleep_advice, export_report_to_excel
+from data_quality import analyze_data_quality, get_filtered_df
 
 
 st.set_page_config(
@@ -151,6 +152,24 @@ with st.sidebar:
                 max_value=max_date
             )
     
+    exclude_anomalies = True
+    has_anomalies = False
+    if 'data_quality_result' in st.session_state and st.session_state.data_quality_result is not None:
+        has_anomalies = st.session_state.data_quality_result.get('excluded_records', 0) > 0 or \
+                        st.session_state.data_quality_result.get('anomaly_records', [])
+    
+    st.markdown('---')
+    st.subheader('🛡️ 数据质量')
+    if has_anomalies:
+        exclude_anomalies = st.toggle(
+            '排除影响睡眠时长的异常记录',
+            value=True,
+            help='默认排除入睡/起床时间缺失、格式错误或睡眠时长异常的记录，可关闭以查看包含异常的统计结果'
+        )
+        st.caption(f"共 {st.session_state.data_quality_result.get('excluded_records', 0)} 条严重异常记录默认排除")
+    else:
+        st.info('✅ 数据质量良好，未检测到严重异常')
+    
     st.markdown('---')
     st.subheader('📊 分析维度')
     analysis_mode = st.radio(
@@ -220,11 +239,17 @@ if df_raw is None:
 with st.spinner('正在处理数据...'):
     processed_df = preprocess_data(df_raw)
     st.session_state.processed_df = processed_df
-    data_quality = check_data_quality(processed_df)
-    st.session_state.data_quality = data_quality
+    
+    data_quality_v1 = check_data_quality(processed_df)
+    st.session_state.data_quality = data_quality_v1
+    
+    data_quality_result = analyze_data_quality(processed_df)
+    st.session_state.data_quality_result = data_quality_result
+
+quality_filtered_df = get_filtered_df(processed_df, data_quality_result, exclude_anomalies=exclude_anomalies)
 
 filtered_df = apply_filters(
-    processed_df,
+    quality_filtered_df,
     age_group=filter_age,
     feeding_type=filter_feeding,
     teething=filter_teething,
@@ -243,14 +268,135 @@ advice = generate_sleep_advice(filtered_df, patterns, stability, stats)
 
 st.success(f'✅ 数据加载完成：{stats["days_recorded"]} 天记录，{stats["date_range"][0]} ~ {stats["date_range"][1]}')
 
-if data_quality['issues']:
-    with st.expander('⚠️ 数据质量问题（点击查看）', expanded=True):
-        for issue in data_quality['issues']:
-            st.error(issue)
-        st.caption('以上问题可能导致统计结果失真，建议检查原始数据后重新上传')
+with st.container():
+    st.markdown("""
+    <style>
+    .quality-panel {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        border-radius: 12px;
+        padding: 1.2rem 1.5rem;
+        margin-bottom: 1rem;
+        border: 1px solid #bae6fd;
+    }
+    .quality-score-circle {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: white;
+        flex-shrink: 0;
+    }
+    .quality-item {
+        background: white;
+        border-radius: 8px;
+        padding: 0.6rem 0.8rem;
+        margin: 0.3rem 0;
+        border-left: 3px solid;
+    }
+    .quality-critical { border-color: #ef4444; }
+    .quality-warning { border-color: #f59e0b; }
+    .quality-info { border-color: #3b82f6; }
+    .quality-fixed { border-color: #10b981; }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    qr = data_quality_result
+    score = qr.get('score', 0)
+    level = qr.get('level', '')
+    total = qr.get('total_records', 0)
+    valid = qr.get('valid_records', 0)
+    excluded = qr.get('excluded_records', 0)
+    fixable = qr.get('fixable_count', 0)
+    
+    if score >= 90:
+        score_color = '#10b981'
+    elif score >= 75:
+        score_color = '#3b82f6'
+    elif score >= 60:
+        score_color = '#f59e0b'
+    elif score >= 40:
+        score_color = '#f97316'
+    else:
+        score_color = '#ef4444'
+    
+    st.markdown(f"""
+    <div class="quality-panel">
+        <div style="display:flex;align-items:center;gap:1.5rem;">
+            <div class="quality-score-circle" style="background:{score_color}">
+                {score}
+            </div>
+            <div style="flex:1;">
+                <div style="font-size:1.2rem;font-weight:600;color:#0f172a;margin-bottom:0.3rem">
+                    数据质量评分：{level}
+                </div>
+                <div style="color:#475569;font-size:0.9rem;">
+                    共 {total} 条记录，有效 {valid} 条，排除 {excluded} 条（影响睡眠时长），自动修正 {fixable} 条
+                </div>
+                <div style="color:#64748b;font-size:0.85rem;margin-top:0.3rem">
+                    {"⚠️ 当前已排除异常记录，统计结果基于有效数据" if exclude_anomalies else "📊 当前包含所有记录（含异常），统计结果可能失真"}
+                </div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    anomaly_records = qr.get('anomaly_records', [])
+    if anomaly_records:
+        with st.expander(f'📋 异常记录详情（{len(anomaly_records)} 条）', expanded=excluded > 0):
+            critical_recs = [r for r in anomaly_records if r['severity'] == 'critical']
+            warning_recs = [r for r in anomaly_records if r['severity'] == 'warning']
+            fix_recs = [r for r in anomaly_records if r['is_fixable']]
+            
+            if critical_recs:
+                st.markdown(f"**🔴 严重问题（{len(critical_recs)} 条，默认排除）**")
+                for rec in critical_recs[:5]:
+                    issues_str = '；'.join([i['message'] for i in rec['issues'] if i['severity'] == 'critical'])
+                    affected = '、'.join(rec['affected_fields']) if rec['affected_fields'] else '未知'
+                    st.markdown(f"""
+                    <div class="quality-item quality-critical">
+                        <div style="font-weight:600;color:#991b1b">{rec['date']}</div>
+                        <div style="color:#4b5563;font-size:0.9rem;margin-top:2px">{issues_str}</div>
+                        <div style="color:#6b7280;font-size:0.8rem;margin-top:2px">影响字段：{affected}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                if len(critical_recs) > 5:
+                    st.caption(f'... 还有 {len(critical_recs) - 5} 条严重问题记录')
+            
+            if warning_recs:
+                st.markdown(f"**🟡 警告级问题（{len(warning_recs)} 条）**")
+                for rec in warning_recs[:5]:
+                    issues_str = '；'.join([i['message'] for i in rec['issues'] if i['severity'] == 'warning'])
+                    st.markdown(f"""
+                    <div class="quality-item quality-warning">
+                        <div style="font-weight:600;color:#92400e">{rec['date']}</div>
+                        <div style="color:#4b5563;font-size:0.9rem;margin-top:2px">{issues_str}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                if len(warning_recs) > 5:
+                    st.caption(f'... 还有 {len(warning_recs) - 5} 条警告级记录')
+            
+            if fix_recs:
+                st.markdown(f"**✅ 已自动修正（{len(fix_recs)} 条）**")
+                for rec in fix_recs[:5]:
+                    fixes_str = '；'.join([f['message'] for f in rec['fixes']])
+                    st.markdown(f"""
+                    <div class="quality-item quality-fixed">
+                        <div style="font-weight:600;color:#065f46">{rec['date']}</div>
+                        <div style="color:#4b5563;font-size:0.9rem;margin-top:2px">{fixes_str}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                if len(fix_recs) > 5:
+                    st.caption(f'... 还有 {len(fix_recs) - 5} 条已修正记录')
+            
+            st.markdown('---')
+            st.caption('💡 可在左侧「数据质量」面板切换「排除/纳入异常记录」对比分析结果差异')
 
 if data_quality['warnings']:
-    with st.expander('⚡ 数据提示（点击查看）', expanded=False):
+    with st.expander('⚡ 补充提示（点击查看）', expanded=False):
         for w in data_quality['warnings']:
             st.warning(w)
 
@@ -511,7 +657,10 @@ elif analysis_mode == '睡眠节律建议':
     
     if st.button('📥 生成并下载 Excel 报告', type='primary', use_container_width=True):
         with st.spinner('正在生成报告...'):
-            report_io = export_report_to_excel(filtered_df, stats, stability, patterns, advice)
+            report_io = export_report_to_excel(
+                filtered_df, stats, stability, patterns, advice,
+                quality_result=data_quality_result
+            )
             st.success('✅ 报告生成成功！')
             
             st.download_button(
@@ -535,6 +684,11 @@ elif analysis_mode == '睡眠节律建议':
         
         **Sheet 3：分组统计**
         - 按月龄/入睡时段/小睡次数/奶量区间/喂养方式的均值统计
+        
+        **Sheet 4：数据质量与异常记录**
+        - 数据质量评分与概览
+        - 各字段异常统计
+        - 异常记录明细（原始值、修正值、是否纳入统计、异常原因、影响字段）
         """)
 
 st.markdown('---')

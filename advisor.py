@@ -10,6 +10,7 @@ from analyzer import (
     compute_basic_stats, compute_stability_score, detect_patterns,
     compare_to_norms, age_based_sleep_norms
 )
+from data_quality import get_anomaly_dataframe
 
 
 def generate_sleep_advice(df, patterns, stability, stats):
@@ -167,7 +168,7 @@ def generate_sleep_advice(df, patterns, stability, stats):
     return advice
 
 
-def export_report_to_excel(df, stats, stability, patterns, advice):
+def export_report_to_excel(df, stats, stability, patterns, advice, quality_result=None):
     output = BytesIO()
     wb = openpyxl.Workbook()
     
@@ -412,6 +413,111 @@ def export_report_to_excel(df, stats, stability, patterns, advice):
     
     for col_idx in range(1, 15):
         ws3.column_dimensions[chr(64 + col_idx)].width = 18
+    
+    if quality_result is not None:
+        ws4 = wb.create_sheet('数据质量与异常记录')
+        r4 = 1
+        
+        ws4.cell(row=r4, column=1, value='数据质量与异常记录报告').font = Font(
+            name='Arial Unicode MS', bold=True, size=16, color='6366F1'
+        )
+        ws4.merge_cells('A1:H1')
+        r4 += 1
+        ws4.cell(row=r4, column=1, value=f'生成时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}').font = normal_font
+        r4 += 2
+        
+        score = quality_result.get('score', 0)
+        level = quality_result.get('level', '')
+        total = quality_result.get('total_records', 0)
+        valid = quality_result.get('valid_records', 0)
+        excluded = quality_result.get('excluded_records', 0)
+        fixable = quality_result.get('fixable_count', 0)
+        
+        quality_summary = [
+            ['数据质量评分', f'{score} 分 ({level})'],
+            ['总记录数', f'{total} 条'],
+            ['有效记录', f'{valid} 条'],
+            ['排除记录(影响睡眠时长)', f'{excluded} 条'],
+            ['自动修正记录', f'{fixable} 条'],
+        ]
+        
+        ws4.cell(row=r4, column=1, value='一、数据质量概览').font = section_font
+        ws4.merge_cells(start_row=r4, start_column=1, end_row=r4, end_column=4)
+        r4 += 1
+        
+        for label, val in quality_summary:
+            c1 = ws4.cell(row=r4, column=1, value=label)
+            c1.font = normal_font
+            c1.border = thin_border
+            c2 = ws4.cell(row=r4, column=2, value=val)
+            c2.font = normal_font
+            c2.border = thin_border
+            r4 += 1
+        
+        summary_fields = quality_result.get('summary_fields', {})
+        if summary_fields:
+            r4 += 1
+            ws4.cell(row=r4, column=1, value='二、各字段异常统计').font = section_font
+            ws4.merge_cells(start_row=r4, start_column=1, end_row=r4, end_column=5)
+            r4 += 1
+            
+            field_headers = ['字段', '严重问题', '警告', '信息', '合计']
+            for j, h in enumerate(field_headers):
+                c = ws4.cell(row=r4, column=j + 1, value=h)
+                c.font = header_font
+                c.fill = header_fill
+                c.alignment = Alignment(horizontal='center')
+                c.border = thin_border
+            r4 += 1
+            
+            for field_name, counts in summary_fields.items():
+                ws4.cell(row=r4, column=1, value=field_name).font = normal_font
+                ws4.cell(row=r4, column=1).border = thin_border
+                ws4.cell(row=r4, column=2, value=counts.get('critical', 0)).font = normal_font
+                ws4.cell(row=r4, column=2).border = thin_border
+                ws4.cell(row=r4, column=3, value=counts.get('warning', 0)).font = normal_font
+                ws4.cell(row=r4, column=3).border = thin_border
+                ws4.cell(row=r4, column=4, value=counts.get('info', 0)).font = normal_font
+                ws4.cell(row=r4, column=4).border = thin_border
+                ws4.cell(row=r4, column=5, value=counts.get('total', 0)).font = normal_font
+                ws4.cell(row=r4, column=5).border = thin_border
+                r4 += 1
+        
+        anomaly_df = get_anomaly_dataframe(quality_result)
+        if not anomaly_df.empty:
+            r4 += 1
+            ws4.cell(row=r4, column=1, value='三、异常记录明细').font = section_font
+            ws4.merge_cells(start_row=r4, start_column=1, end_row=r4, end_column=9)
+            r4 += 1
+            
+            for j, col_name in enumerate(anomaly_df.columns):
+                c = ws4.cell(row=r4, column=j + 1, value=col_name)
+                c.font = header_font
+                c.fill = header_fill
+                c.alignment = Alignment(horizontal='center')
+                c.border = thin_border
+            r4 += 1
+            
+            for _, row_data in anomaly_df.iterrows():
+                for j, val in enumerate(row_data):
+                    c = ws4.cell(row=r4, column=j + 1, value=val)
+                    c.font = normal_font
+                    c.alignment = wrap_alignment
+                    c.border = thin_border
+                    
+                    severity = row_data.get('严重程度', '')
+                    if severity == 'critical':
+                        c.fill = PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid')
+                    elif severity == 'warning':
+                        c.fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
+                    elif row_data.get('类型') == '已修正':
+                        c.fill = PatternFill(start_color='D1FAE5', end_color='D1FAE5', fill_type='solid')
+                
+                r4 += 1
+        
+        col_widths = [12, 10, 16, 28, 28, 10, 32, 12, 20]
+        for i, w in enumerate(col_widths):
+            ws4.column_dimensions[chr(65 + i)].width = w
     
     wb.save(output)
     output.seek(0)

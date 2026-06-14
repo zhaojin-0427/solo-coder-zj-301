@@ -5,6 +5,11 @@ import io
 import warnings
 warnings.filterwarnings('ignore')
 
+from data_quality import (
+    smart_parse_time, smart_parse_numeric,
+    check_nightwakings_valid as quality_check_nw
+)
+
 
 REQUIRED_COLUMNS = {
     'date': ['日期', 'date', 'Date', '记录日期'],
@@ -223,10 +228,23 @@ def preprocess_data(df):
     df = df.sort_values('date').reset_index(drop=True)
     
     df['age_months'] = pd.to_numeric(df['age_months'], errors='coerce')
-    df['nightwakings'] = pd.to_numeric(df['nightwakings'], errors='coerce').fillna(0)
     
-    df['bedtime_minutes'] = df['bedtime'].apply(parse_time_to_minutes)
-    df['wakeup_minutes'] = df['wakeup_time'].apply(parse_time_to_minutes)
+    _quality_fixes = []
+    
+    bt_results = df['bedtime'].apply(smart_parse_time)
+    df['bedtime_minutes'] = bt_results.apply(lambda x: x[0])
+    df['bedtime_fixed'] = bt_results.apply(lambda x: x[1])
+    df['bedtime_fix_note'] = bt_results.apply(lambda x: x[3])
+    
+    wt_results = df['wakeup_time'].apply(smart_parse_time)
+    df['wakeup_minutes'] = wt_results.apply(lambda x: x[0])
+    df['wakeup_fixed'] = wt_results.apply(lambda x: x[1])
+    df['wakeup_fix_note'] = wt_results.apply(lambda x: x[3])
+    
+    nw_results = df['nightwakings'].apply(lambda x: smart_parse_numeric(x, 'nightwakings'))
+    df['nightwakings'] = nw_results.apply(lambda x: x[0] if pd.notna(x[0]) else 0)
+    df['nightwakings_fixed'] = nw_results.apply(lambda x: x[1])
+    df['nightwakings_fix_note'] = nw_results.apply(lambda x: x[3])
     
     def calc_night_sleep(row):
         if pd.isna(row['bedtime_minutes']) or pd.isna(row['wakeup_minutes']):
@@ -240,19 +258,34 @@ def preprocess_data(df):
     df['night_sleep_minutes'] = df.apply(calc_night_sleep, axis=1)
     
     if 'total_nap_minutes' in df.columns:
-        df['total_nap_minutes'] = pd.to_numeric(df['total_nap_minutes'], errors='coerce').fillna(0)
+        nap_results = df['total_nap_minutes'].apply(lambda x: smart_parse_numeric(x, 'total_nap_minutes'))
+        df['total_nap_minutes'] = nap_results.apply(lambda x: x[0] if pd.notna(x[0]) else 0)
+        df['nap_fixed'] = nap_results.apply(lambda x: x[1])
+        df['nap_fix_note'] = nap_results.apply(lambda x: x[3])
     else:
         df['total_nap_minutes'] = 0
+        df['nap_fixed'] = False
+        df['nap_fix_note'] = ''
     
     if 'naps_count' in df.columns:
-        df['naps_count'] = pd.to_numeric(df['naps_count'], errors='coerce').fillna(0)
+        naps_results = df['naps_count'].apply(lambda x: smart_parse_numeric(x, 'naps_count'))
+        df['naps_count'] = naps_results.apply(lambda x: x[0] if pd.notna(x[0]) else 0)
+        df['naps_count_fixed'] = naps_results.apply(lambda x: x[1])
+        df['naps_count_fix_note'] = naps_results.apply(lambda x: x[3])
     else:
         df['naps_count'] = 0
+        df['naps_count_fixed'] = False
+        df['naps_count_fix_note'] = ''
     
     if 'milk_amount_ml' in df.columns:
-        df['milk_amount_ml'] = pd.to_numeric(df['milk_amount_ml'], errors='coerce')
+        milk_results = df['milk_amount_ml'].apply(lambda x: smart_parse_numeric(x, 'milk_amount_ml'))
+        df['milk_amount_ml'] = milk_results.apply(lambda x: x[0])
+        df['milk_fixed'] = milk_results.apply(lambda x: x[1])
+        df['milk_fix_note'] = milk_results.apply(lambda x: x[3])
     else:
         df['milk_amount_ml'] = np.nan
+        df['milk_fixed'] = False
+        df['milk_fix_note'] = ''
     
     if 'feeding_type' not in df.columns:
         df['feeding_type'] = '未知'
@@ -269,9 +302,31 @@ def preprocess_data(df):
     df['weather'] = df['weather'].fillna('未知').astype(str)
     
     if 'nightwaking_periods' not in df.columns:
-        df['nightwaking_periods'] = df.get('nightwaking_periods', 
-                                           df.get('夜醒时段', pd.Series(['无'] * len(df))))
+        if '夜醒时段' in df.columns:
+            df['nightwaking_periods'] = df['夜醒时段']
+        else:
+            df['nightwaking_periods'] = '无'
     df['nightwaking_periods'] = df['nightwaking_periods'].fillna('无')
+    
+    df['nw_period_fixed'] = False
+    df['nw_period_fix_note'] = ''
+    
+    for idx in range(len(df)):
+        nw_count = df.iloc[idx]['nightwakings']
+        nw_periods = df.iloc[idx]['nightwaking_periods']
+        valid, fixed, note, corrected_count, corrected_periods = quality_check_nw(
+            nw_count, nw_periods
+        )
+        if fixed:
+            df.at[idx, 'nightwakings'] = corrected_count
+            df.at[idx, 'nightwaking_periods'] = corrected_periods
+            df.at[idx, 'nw_period_fixed'] = True
+            df.at[idx, 'nw_period_fix_note'] = note
+            df.at[idx, 'nightwakings_fixed'] = True
+            if df.iloc[idx]['nightwakings_fix_note']:
+                df.at[idx, 'nightwakings_fix_note'] = df.iloc[idx]['nightwakings_fix_note'] + '；' + note
+            else:
+                df.at[idx, 'nightwakings_fix_note'] = note
     
     df['total_sleep_minutes'] = df['night_sleep_minutes'].fillna(0) + df['total_nap_minutes'].fillna(0)
     df['total_sleep_hours'] = df['total_sleep_minutes'] / 60
