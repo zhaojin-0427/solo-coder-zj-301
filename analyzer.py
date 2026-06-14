@@ -111,16 +111,16 @@ def detect_patterns(df):
     
     valid_bt = df.dropna(subset=['bedtime_std_7d', 'nightwakings_7d_avg', 'has_early_morning'])
     if len(valid_bt) >= 5:
-        high_var = valid_bt[valid_bt['bedtime_std_7d'] >= 45]
-        low_var = valid_bt[valid_bt['bedtime_std_7d'] < 45]
+        high_var = valid_bt[valid_bt['bedtime_std_7d'] >= 30]
+        low_var = valid_bt[valid_bt['bedtime_std_7d'] < 30]
         if len(high_var) >= 2 and len(low_var) >= 2:
             high_em_pct = high_var['has_early_morning'].mean() * 100
             low_em_pct = low_var['has_early_morning'].mean() * 100
-            if high_em_pct > low_em_pct + 15 and high_em_pct > 30:
+            if high_em_pct > low_em_pct + 10 and high_em_pct > 25:
                 patterns.append({
                     'type': 'warning',
                     'title': '入睡时间波动大时凌晨醒来更频繁',
-                    'detail': f'入睡时间7日滚动标准差≥45分钟的时期，凌晨(04-06点后)醒来的天数占{high_em_pct:.0f}%，'
+                    'detail': f'入睡时间7日滚动标准差≥30分钟的时期，凌晨(04-06点后)醒来的天数占{high_em_pct:.0f}%，'
                               f'比稳定时期({low_em_pct:.0f}%)高出{high_em_pct-low_em_pct:.0f}个百分点。'
                               f'建议固定入睡时间，波动控制在±30分钟内。'
                 })
@@ -141,7 +141,7 @@ def detect_patterns(df):
                 high_em = high_dev['has_early_morning'].mean() * 100
                 low_em = low_dev['has_early_morning'].mean() * 100
                 
-                if high_em > low_em + 20 and high_em > 30:
+                if high_em > low_em + 12 and high_em > 25:
                     patterns.append({
                         'type': 'warning',
                         'title': '入睡时间波动大时凌晨醒来更频繁',
@@ -149,6 +149,48 @@ def detect_patterns(df):
                                   f'凌晨夜醒占比{high_em:.0f}%，'
                                   f'比偏差较小的日子({low_em:.0f}%)高出{high_em-low_em:.0f}个百分点。'
                                   f'固定入睡时间能有效减少凌晨醒来。'
+                    })
+                    pattern_found = True
+    
+    if not pattern_found and len(df) >= 7 and df['has_early_morning'].sum() >= 2:
+        valid_days = df.dropna(subset=['bedtime_minutes', 'has_early_morning'])
+        if len(valid_days) >= 7:
+            bt_median = valid_days['bedtime_minutes'].median()
+            late_bed = valid_days[valid_days['bedtime_minutes'] > bt_median]
+            early_bed = valid_days[valid_days['bedtime_minutes'] <= bt_median]
+            
+            if len(late_bed) >= 3 and len(early_bed) >= 3:
+                late_em = late_bed['has_early_morning'].mean() * 100
+                early_em = early_bed['has_early_morning'].mean() * 100
+                
+                if late_em > early_em + 15 and late_em > 30:
+                    patterns.append({
+                        'type': 'warning',
+                        'title': '入睡越晚，凌晨醒来越频繁',
+                        'detail': f'入睡时间晚于中位数的日子，凌晨夜醒占比{late_em:.0f}%，'
+                                  f'比早睡的日子({early_em:.0f}%)高出{late_em-early_em:.0f}个百分点。'
+                                  f'建议适当提前入睡时间，可能改善凌晨夜醒。'
+                    })
+                    pattern_found = True
+    
+    if not pattern_found and len(df) >= 10 and df['has_early_morning'].sum() >= 3:
+        valid_days = df.dropna(subset=['bedtime_minutes', 'nightwakings'])
+        if len(valid_days) >= 10:
+            bt_std = valid_days['bedtime_minutes'].std()
+            em_ratio = df['has_early_morning'].mean()
+            if bt_std >= 30 and em_ratio >= 0.3:
+                valid_days = valid_days.copy()
+                valid_days['em_count'] = df['nw_periods_list'].apply(
+                    lambda x: sum(1 for p in x if p in ['凌晨(04-06)', '清晨(06+)'])
+                )
+                corr = valid_days['bedtime_minutes'].abs().corr(valid_days['em_count'])
+                if pd.notna(corr) and corr > 0.2:
+                    patterns.append({
+                        'type': 'warning',
+                        'title': '入睡时间波动与凌晨夜醒相关',
+                        'detail': f'数据显示入睡时间越晚/波动越大，凌晨(04-06点后)醒来的次数越多'
+                                  f'（相关系数{corr:.2f}）。'
+                                  f'建议建立稳定的入睡节律，控制在±30分钟内。'
                     })
                     pattern_found = True
     

@@ -312,6 +312,50 @@ def preprocess_data(df):
     return df
 
 
+def check_data_quality(df):
+    issues = []
+    warnings = []
+    info = []
+    
+    total = len(df)
+    
+    bedtime_missing = df['bedtime_minutes'].isna().sum()
+    if bedtime_missing > 0:
+        issues.append(f"入睡时间缺失或格式错误: {bedtime_missing}/{total} 条")
+    
+    wakeup_missing = df['wakeup_minutes'].isna().sum()
+    if wakeup_missing > 0:
+        issues.append(f"起床时间缺失或格式错误: {wakeup_missing}/{total} 条")
+    
+    night_sleep_neg = (df['night_sleep_minutes'].dropna() < 5 * 60).sum()
+    if night_sleep_neg > 0:
+        issues.append(f"夜间睡眠时长异常(<5小时): {night_sleep_neg}/{total} 条，可能是入睡/起床时间填反或格式错误")
+    
+    night_sleep_long = (df['night_sleep_minutes'].dropna() > 15 * 60).sum()
+    if night_sleep_long > 0:
+        warnings.append(f"夜间睡眠时长偏长(>15小时): {night_sleep_long}/{total} 条，请确认数据")
+    
+    has_nw_periods = df['nw_periods_list'].apply(lambda x: len(x) > 0).sum()
+    if has_nw_periods == 0 and df['nightwakings'].sum() > 0:
+        warnings.append("有夜醒次数但无夜醒时段数据，热力图和时段分析功能将受限")
+    elif has_nw_periods == 0:
+        info.append("未提供夜醒时段数据，热力图和时段分析功能不可用")
+    
+    naps_missing = df['naps_count'].isna().sum()
+    if naps_missing > 0:
+        info.append(f"小睡次数缺失: {naps_missing}/{total} 条")
+    
+    return {
+        'total_rows': total,
+        'issues': issues,
+        'warnings': warnings,
+        'info': info,
+        'bedtime_valid': total - bedtime_missing,
+        'wakeup_valid': total - wakeup_missing,
+        'has_nw_periods': has_nw_periods > 0
+    }
+
+
 def apply_filters(df, age_group=None, feeding_type=None, teething=None, weather=None,
                   date_range=None):
     filtered = df.copy()

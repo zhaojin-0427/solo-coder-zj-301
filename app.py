@@ -6,7 +6,7 @@ import time
 
 from data_processor import (
     load_csv, preprocess_data, apply_filters, minutes_to_time_display,
-    normalize_columns
+    normalize_columns, check_data_quality
 )
 from analyzer import (
     compute_basic_stats, compute_stability_score, detect_patterns,
@@ -220,6 +220,8 @@ if df_raw is None:
 with st.spinner('正在处理数据...'):
     processed_df = preprocess_data(df_raw)
     st.session_state.processed_df = processed_df
+    data_quality = check_data_quality(processed_df)
+    st.session_state.data_quality = data_quality
 
 filtered_df = apply_filters(
     processed_df,
@@ -240,6 +242,22 @@ patterns = detect_patterns(filtered_df)
 advice = generate_sleep_advice(filtered_df, patterns, stability, stats)
 
 st.success(f'✅ 数据加载完成：{stats["days_recorded"]} 天记录，{stats["date_range"][0]} ~ {stats["date_range"][1]}')
+
+if data_quality['issues']:
+    with st.expander('⚠️ 数据质量问题（点击查看）', expanded=True):
+        for issue in data_quality['issues']:
+            st.error(issue)
+        st.caption('以上问题可能导致统计结果失真，建议检查原始数据后重新上传')
+
+if data_quality['warnings']:
+    with st.expander('⚡ 数据提示（点击查看）', expanded=False):
+        for w in data_quality['warnings']:
+            st.warning(w)
+
+if data_quality['info']:
+    with st.expander('ℹ️ 数据说明（点击查看）', expanded=False):
+        for info in data_quality['info']:
+            st.info(info)
 
 
 if analysis_mode == '总览仪表盘':

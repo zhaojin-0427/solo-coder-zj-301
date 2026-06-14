@@ -93,7 +93,11 @@ def plot_sleep_trend(df):
 
 def plot_nightwaking_heatmap(df):
     if len(df) == 0:
-        return go.Figure()
+        fig = go.Figure()
+        fig.update_layout(title='夜醒时段分布热力图', height=320, template='plotly_white',
+                          annotations=[dict(text='无数据', x=0.5, y=0.5, showarrow=False,
+                                             font=dict(size=16, color='#9CA3AF'))])
+        return fig
     
     periods_order = ['入睡后(22-01)', '深夜(01-04)', '凌晨(04-06)', '清晨(06+)']
     
@@ -110,7 +114,20 @@ def plot_nightwaking_heatmap(df):
             records.append({'date': d, 'period': p, 'count': period_counts.get(p, 0)})
     
     if not records:
-        return go.Figure()
+        fig = go.Figure()
+        fig.update_layout(title='夜醒时段分布热力图（按时段独立统计）', height=320,
+                          template='plotly_white',
+                          annotations=[
+                              dict(
+                                  text='暂无夜醒时段数据<br><span style="font-size:12px;color:#9CA3AF">请在 CSV 中补充「夜醒时段」列</span>',
+                                  x=0.5, y=0.5, showarrow=False,
+                                  font=dict(size=14, color='#6B7280'),
+                                  align='center'
+                              )
+                          ])
+        fig.update_yaxes(visible=False)
+        fig.update_xaxes(visible=False)
+        return fig
     
     heatmap_df = pd.DataFrame(records)
     pivot = heatmap_df.pivot(index='date', columns='period', values='count').fillna(0)
