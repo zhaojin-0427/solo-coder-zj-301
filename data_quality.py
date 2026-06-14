@@ -604,6 +604,12 @@ def get_filtered_df(df, quality_result, exclude_anomalies=True):
     返回:
         DataFrame: 过滤后的数据
     """
+    if df is None:
+        return None
+    
+    if quality_result is None:
+        return df.copy()
+    
     if not exclude_anomalies:
         return df.copy()
     

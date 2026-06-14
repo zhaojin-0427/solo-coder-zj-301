@@ -117,18 +117,57 @@ with st.sidebar:
     )
     
     use_sample = st.checkbox('使用示例数据（测试用）', value=False)
-    
+
+
+def load_data():
+    df = None
+    msg = None
+    if use_sample:
+        try:
+            import generate_sample_data
+            csv_content = generate_sample_data.generate_csv()
+            from io import StringIO
+            df = pd.read_csv(StringIO(csv_content))
+            df = normalize_columns(df)
+            msg = None
+        except Exception as e:
+            msg = f'生成示例数据失败: {e}'
+    elif uploaded_file is not None:
+        df, msg = load_csv(uploaded_file)
+    return df, msg
+
+
+df_raw, load_msg = load_data()
+
+processed_df = None
+data_quality = None
+data_quality_result = None
+
+if df_raw is not None:
+    with st.spinner('正在处理数据...'):
+        processed_df = preprocess_data(df_raw)
+        st.session_state.processed_df = processed_df
+        
+        data_quality = check_data_quality(processed_df)
+        st.session_state.data_quality = data_quality
+        
+        data_quality_result = analyze_data_quality(processed_df)
+        st.session_state.data_quality_result = data_quality_result
+
+filter_age = '全部'
+filter_feeding = '全部'
+filter_teething = '全部'
+filter_weather = '全部'
+date_range = None
+exclude_anomalies = True
+analysis_mode = '总览仪表盘'
+
+with st.sidebar:
     st.markdown('---')
     st.subheader('🔍 筛选条件')
     
-    filter_age = '全部'
-    filter_feeding = '全部'
-    filter_teething = '全部'
-    filter_weather = '全部'
-    date_range = None
-    
-    if 'processed_df' in st.session_state and st.session_state.processed_df is not None:
-        df = st.session_state.processed_df
+    if processed_df is not None:
+        df = processed_df
         
         age_options = ['全部'] + sorted(df['age_group'].unique().tolist())
         filter_age = st.selectbox('月龄阶段', age_options, index=0)
@@ -152,23 +191,22 @@ with st.sidebar:
                 max_value=max_date
             )
     
-    exclude_anomalies = True
-    has_anomalies = False
-    if 'data_quality_result' in st.session_state and st.session_state.data_quality_result is not None:
-        has_anomalies = st.session_state.data_quality_result.get('excluded_records', 0) > 0 or \
-                        st.session_state.data_quality_result.get('anomaly_records', [])
+    excluded_count = 0
+    if data_quality_result is not None:
+        excluded_count = data_quality_result.get('excluded_records', 0)
     
     st.markdown('---')
     st.subheader('🛡️ 数据质量')
-    if has_anomalies:
+    if processed_df is not None:
         exclude_anomalies = st.toggle(
             '排除影响睡眠时长的异常记录',
             value=True,
-            help='默认排除入睡/起床时间缺失、格式错误或睡眠时长异常的记录，可关闭以查看包含异常的统计结果'
+            help='默认排除入睡/起床时间缺失、格式错误或睡眠时长异常的记录，关闭后可对比包含异常的统计结果'
         )
-        st.caption(f"共 {st.session_state.data_quality_result.get('excluded_records', 0)} 条严重异常记录默认排除")
-    else:
-        st.info('✅ 数据质量良好，未检测到严重异常')
+        if excluded_count > 0:
+            st.caption(f"共 {excluded_count} 条严重异常记录会被排除")
+        else:
+            st.info('✅ 当前未检测到影响睡眠时长的严重异常')
     
     st.markdown('---')
     st.subheader('📊 分析维度')
@@ -183,27 +221,6 @@ with st.sidebar:
 
 st.title('🌙 宝宝睡眠节律与夜醒诱因分析台')
 st.caption('基于 CSV 作息记录，自动分析睡眠模式、识别夜醒诱因、提供个性化节律建议')
-
-
-def load_data():
-    df = None
-    msg = None
-    if use_sample:
-        try:
-            import generate_sample_data
-            csv_content = generate_sample_data.generate_csv()
-            from io import StringIO
-            df = pd.read_csv(StringIO(csv_content))
-            df = normalize_columns(df)
-            msg = None
-        except Exception as e:
-            msg = f'生成示例数据失败: {e}'
-    elif uploaded_file is not None:
-        df, msg = load_csv(uploaded_file)
-    return df, msg
-
-
-df_raw, load_msg = load_data()
 
 if df_raw is None:
     if load_msg and '请上传' not in load_msg:
@@ -235,16 +252,6 @@ if df_raw is None:
         | last_nap_end | 16:00 | 白天最后一觉结束时间 |
         """)
     st.stop()
-
-with st.spinner('正在处理数据...'):
-    processed_df = preprocess_data(df_raw)
-    st.session_state.processed_df = processed_df
-    
-    data_quality_v1 = check_data_quality(processed_df)
-    st.session_state.data_quality = data_quality_v1
-    
-    data_quality_result = analyze_data_quality(processed_df)
-    st.session_state.data_quality_result = data_quality_result
 
 quality_filtered_df = get_filtered_df(processed_df, data_quality_result, exclude_anomalies=exclude_anomalies)
 
