@@ -36,7 +36,7 @@ def export_phase_review_to_excel(
         '稳定良好': PatternFill(start_color='6EE7B7', end_color='6EE7B7', fill_type='solid'),
         '反复波动': PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid'),
         '观察中': PatternFill(start_color='E5E7EB', end_color='E5E7EB', fill_type='solid'),
-        '不稳定': PatternFill(start_color='#FED7AA', end_color='#FED7AA', fill_type='solid'),
+        '不稳定': PatternFill(start_color='FED7AA', end_color='FED7AA', fill_type='solid'),
         '阶段倒退': PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid'),
         '数据不足': PatternFill(start_color='F3F4F6', end_color='F3F4F6', fill_type='solid'),
     }
@@ -50,6 +50,13 @@ def export_phase_review_to_excel(
             cell.border = thin_border
     
     def style_data_cell(ws, row, col, value, fill=None):
+        if value is None:
+            value = ''
+        elif isinstance(value, (float, np.floating)):
+            if pd.isna(value) or np.isnan(value) or np.isinf(value):
+                value = ''
+        elif pd.isna(value):
+            value = ''
         cell = ws.cell(row=row, column=col, value=value)
         cell.font = normal_font
         cell.alignment = wrap_alignment
@@ -157,10 +164,18 @@ def export_phase_review_to_excel(
             style_data_cell(ws1, r, i + 2, display_val)
         
         if len(values) >= 2 and all(v is not None for v in values[:2]):
-            diff = values[-1] - values[0]
-            pct = (diff / max(values[0], 0.01)) * 100
-            style_data_cell(ws1, r, len(phase_results) + 2, round(diff, 2))
-            style_data_cell(ws1, r, len(phase_results) + 3, f"{round(pct, 1)}%")
+            try:
+                diff = float(values[-1]) - float(values[0])
+                base_val = abs(float(values[0]))
+                if base_val > 0.001:
+                    pct = (diff / base_val) * 100
+                else:
+                    pct = 0.0 if abs(diff) < 0.001 else (100.0 if diff > 0 else -100.0)
+                style_data_cell(ws1, r, len(phase_results) + 2, round(diff, 2))
+                style_data_cell(ws1, r, len(phase_results) + 3, f"{round(pct, 1)}%")
+            except (TypeError, ValueError):
+                style_data_cell(ws1, r, len(phase_results) + 2, '-')
+                style_data_cell(ws1, r, len(phase_results) + 3, '-')
         
         r += 1
     
@@ -221,14 +236,18 @@ def export_phase_review_to_excel(
     for pr in phase_results:
         corr = pr.get('milk_nw_correlation')
         style_data_cell(ws1, r, 1, pr['phase_name'])
-        style_data_cell(ws1, r, 2, f'{corr:.3f}' if corr is not None else '数据不足')
+        if corr is not None and isinstance(corr, (int, float)) and pd.notna(corr):
+            style_data_cell(ws1, r, 2, f'{float(corr):.3f}')
+        else:
+            style_data_cell(ws1, r, 2, '数据不足')
         note = ''
-        if corr is not None:
-            if corr < -0.3:
+        if corr is not None and isinstance(corr, (int, float)) and pd.notna(corr):
+            corr_val = float(corr)
+            if corr_val < -0.3:
                 note = '奶量增加显著关联夜醒减少'
-            elif corr < -0.1:
+            elif corr_val < -0.1:
                 note = '奶量增加轻度关联夜醒减少'
-            elif corr <= 0.1:
+            elif corr_val <= 0.1:
                 note = '无明显关联'
             else:
                 note = '奶量增加反而夜醒增多，需排查原因'
@@ -300,8 +319,13 @@ def export_phase_review_to_excel(
                 val = row[col]
                 if col == 'date':
                     val = val.strftime('%Y-%m-%d') if pd.notna(val) else ''
-                elif isinstance(val, float):
-                    val = round(val, 2)
+                elif isinstance(val, float) or isinstance(val, np.floating):
+                    if pd.isna(val):
+                        val = ''
+                    else:
+                        val = round(float(val), 2)
+                elif pd.isna(val):
+                    val = ''
                 style_data_cell(ws2, r2, j + 2, val)
             r2 += 1
         r2 += 2
@@ -418,14 +442,34 @@ def export_phase_review_to_excel(
             r3 += 1
             
             for rec in anomaly_records[:50]:
-                issues_str = '；'.join([i['message'] for i in rec.get('issues', [])])
-                affected = '、'.join(rec.get('affected_fields', [])) or '未知'
-                sev_fill = status_fill_map.get('阶段倒退') if rec.get('severity') == 'critical' else status_fill_map.get('反复波动')
-                
-                style_data_cell(ws3, r3, 1, rec.get('date', ''), fill=sev_fill)
-                style_data_cell(ws3, r3, 2, rec.get('severity', ''), fill=sev_fill)
-                style_data_cell(ws3, r3, 3, issues_str, fill=sev_fill)
-                style_data_cell(ws3, r3, 4, affected, fill=sev_fill)
+                try:
+                    issues_list = rec.get('issues', [])
+                    if issues_list and isinstance(issues_list, list):
+                        issues_str = '；'.join([
+                            i.get('message', str(i)) if isinstance(i, dict) else str(i) 
+                            for i in issues_list
+                        ])
+                    else:
+                        issues_str = str(issues_list) if issues_list else '无'
+                    
+                    affected_fields = rec.get('affected_fields', [])
+                    if isinstance(affected_fields, list):
+                        affected = '、'.join(affected_fields) or '未知'
+                    else:
+                        affected = str(affected_fields)
+                    
+                    severity = rec.get('severity', 'unknown')
+                    sev_fill = status_fill_map.get('阶段倒退') if severity == 'critical' else status_fill_map.get('反复波动')
+                    
+                    style_data_cell(ws3, r3, 1, rec.get('date', ''), fill=sev_fill)
+                    style_data_cell(ws3, r3, 2, severity, fill=sev_fill)
+                    style_data_cell(ws3, r3, 3, issues_str, fill=sev_fill)
+                    style_data_cell(ws3, r3, 4, affected, fill=sev_fill)
+                except Exception as e:
+                    style_data_cell(ws3, r3, 1, rec.get('date', '未知日期'))
+                    style_data_cell(ws3, r3, 2, 'unknown')
+                    style_data_cell(ws3, r3, 3, f'记录解析异常: {str(e)}')
+                    style_data_cell(ws3, r3, 4, '未知')
                 r3 += 1
             
             if len(anomaly_records) > 50:

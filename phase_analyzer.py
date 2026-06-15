@@ -367,21 +367,39 @@ def compute_intervention_vs_prediction(intervention_phase_df, prediction_result)
     
     for key in comparison:
         item = comparison[key]
-        pred_improvement = item['predicted'] - item['baseline']
-        actual_improvement = item['actual'] - item['baseline']
+        item['predicted'] = round(item.get('predicted', 0) or 0, 2)
+        item['actual'] = round(item.get('actual', 0) or 0, 2)
+        item['baseline'] = round(item.get('baseline', 0) or 0, 2)
         item['diff_pred_actual'] = round(item['actual'] - item['predicted'], 2)
         
-        if key == 'avg_nightwakings':
+        if key == 'nightwakings':
             pred_improvement = item['baseline'] - item['predicted']
             actual_improvement = item['baseline'] - item['actual']
-            if pred_improvement > 0:
-                item['achievement_pct'] = round(min(100, actual_improvement / pred_improvement * 100), 1)
+            target_direction = 'decrease'
         else:
-            if pred_improvement != 0:
-                item['achievement_pct'] = round(min(100, actual_improvement / pred_improvement * 100), 1)
+            pred_improvement = item['predicted'] - item['baseline']
+            actual_improvement = item['actual'] - item['baseline']
+            target_direction = 'increase'
         
-        item['predicted'] = round(item['predicted'], 2)
-        item['actual'] = round(item['actual'], 2)
-        item['baseline'] = round(item['baseline'], 2)
+        if pd.isna(pred_improvement) or pd.isna(actual_improvement) or np.isinf(pred_improvement) or np.isinf(actual_improvement):
+            item['achievement_pct'] = 0.0
+        elif abs(pred_improvement) < 0.05:
+            if abs(actual_improvement) < 0.05:
+                item['achievement_pct'] = 100.0
+            else:
+                actual_positive = (target_direction == 'decrease' and actual_improvement > 0) or \
+                                  (target_direction == 'increase' and actual_improvement > 0)
+                if actual_positive:
+                    item['achievement_pct'] = 100.0
+                else:
+                    item['achievement_pct'] = 0.0
+        else:
+            raw_pct = actual_improvement / pred_improvement * 100
+            if pd.isna(raw_pct) or np.isinf(raw_pct):
+                item['achievement_pct'] = 0.0
+            else:
+                item['achievement_pct'] = round(max(0, min(150, raw_pct)), 1)
+                if item['achievement_pct'] < 0:
+                    item['achievement_pct'] = 0.0
     
     return comparison

@@ -1292,7 +1292,7 @@ elif analysis_mode == '睡眠复盘与阶段对比中心':
                 '喂养方式': filter_feeding,
                 '是否长牙': filter_teething,
                 '天气': filter_weather,
-                '日期范围': f'{date_range[0]} ~ {date_range[1]}' if date_range else '全部',
+                '日期范围': f'{date_range[0]} ~ {date_range[1]}' if date_range and len(date_range) == 2 else ('全部' if not date_range else str(date_range[0])),
                 '排除异常记录': '是' if exclude_anomalies else '否'
             }
             
