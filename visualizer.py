@@ -520,3 +520,197 @@ def plot_weekly_pattern(df):
         showlegend=False
     )
     return fig
+
+
+def plot_intervention_comparison(prediction):
+    baseline = prediction['baseline']
+    predicted = prediction['predicted']
+    changes = prediction['changes']
+    
+    fig = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=('夜醒次数对比', '总睡眠时长对比', '作息稳定度对比'),
+        column_widths=[0.33, 0.33, 0.34]
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            x=['基线', '预测'],
+            y=[baseline['avg_nightwakings'], predicted['avg_nightwakings']],
+            name='夜醒次数',
+            marker_color=[COLOR_PALETTE['warning'], COLOR_PALETTE['success']],
+            text=[f"{baseline['avg_nightwakings']:.2f}", f"{predicted['avg_nightwakings']:.2f}"],
+            textposition='outside',
+            showlegend=False
+        ), row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            x=['基线', '预测'],
+            y=[baseline['avg_total_sleep_hours'], predicted['avg_total_sleep_hours']],
+            name='总睡眠(小时)',
+            marker_color=[COLOR_PALETTE['info'], COLOR_PALETTE['primary']],
+            text=[f"{baseline['avg_total_sleep_hours']:.1f}h", f"{predicted['avg_total_sleep_hours']:.1f}h"],
+            textposition='outside',
+            showlegend=False
+        ), row=1, col=2
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            x=['基线', '预测'],
+            y=[baseline['stability_score'], predicted['stability_score']],
+            name='稳定度(分)',
+            marker_color=[COLOR_PALETTE['secondary'], COLOR_PALETTE['success']],
+            text=[f"{baseline['stability_score']:.0f}分", f"{predicted['stability_score']:.0f}分"],
+            textposition='outside',
+            showlegend=False
+        ), row=1, col=3
+    )
+    
+    fig.update_yaxes(title_text='次/夜', row=1, col=1)
+    fig.update_yaxes(title_text='小时/天', row=1, col=2)
+    fig.update_yaxes(title_text='分', range=[0, 100], row=1, col=3)
+    
+    fig.update_layout(
+        height=360,
+        template='plotly_white',
+        title='干预前后核心指标对比'
+    )
+    return fig
+
+
+def plot_prediction_trend(daily_series):
+    fig = make_subplots(
+        rows=2, cols=1,
+        subplot_titles=('夜醒次数预测趋势', '总睡眠时长预测趋势'),
+        vertical_spacing=0.12,
+        shared_xaxes=True
+    )
+    
+    days = daily_series['days']
+    
+    fig.add_trace(
+        go.Scatter(
+            x=days, y=daily_series['nightwakings'],
+            name='预测夜醒', mode='lines+markers',
+            line=dict(color=COLOR_PALETTE['danger'], width=2.5),
+            marker=dict(size=5),
+            fill='tozeroy',
+            fillcolor=f'rgba(239, 68, 68, 0.1)'
+        ), row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=days, y=daily_series['total_sleep_hours'],
+            name='预测总睡眠', mode='lines+markers',
+            line=dict(color=COLOR_PALETTE['primary'], width=2.5),
+            marker=dict(size=5),
+            fill='tozeroy',
+            fillcolor=f'rgba(99, 102, 241, 0.1)'
+        ), row=2, col=1
+    )
+    
+    fig.update_yaxes(title_text='次/夜', row=1, col=1)
+    fig.update_yaxes(title_text='小时', row=2, col=1)
+    
+    fig.update_layout(
+        height=440,
+        template='plotly_white',
+        hovermode='x unified',
+        showlegend=False
+    )
+    return fig
+
+
+def plot_dimension_effects(dimension_effects):
+    dims = []
+    nw_impacts = []
+    sleep_impacts = []
+    risks = []
+    
+    risk_color_map = {
+        'low': COLOR_PALETTE['success'],
+        'medium': COLOR_PALETTE['warning'],
+        'high': COLOR_PALETTE['danger'],
+    }
+    
+    for key, dim in dimension_effects.items():
+        dims.append(f"{dim['icon']} {dim['name']}")
+        nw_impacts.append(dim['nw_reduction_pct_contribution'])
+        sleep_impacts.append(dim['sleep_change_contribution'])
+        risks.append(risk_color_map.get(dim['risk_level'], COLOR_PALETTE['info']))
+    
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=('各维度夜醒改善贡献', '各维度睡眠时长贡献'),
+        column_widths=[0.5, 0.5]
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            x=dims,
+            y=nw_impacts,
+            name='夜醒减少(%)',
+            marker_color=COLOR_PALETTE['success'],
+            text=[f"{v:+.1f}%" for v in nw_impacts],
+            textposition='outside',
+            showlegend=False
+        ), row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            x=dims,
+            y=sleep_impacts,
+            name='睡眠增加(分钟)',
+            marker_color=COLOR_PALETTE['primary'],
+            text=[f"{v:+.0f}分" for v in sleep_impacts],
+            textposition='outside',
+            showlegend=False
+        ), row=1, col=2
+    )
+    
+    fig.update_yaxes(title_text='夜醒减少百分比', row=1, col=1)
+    fig.update_yaxes(title_text='睡眠时长增加(分钟)', row=1, col=2)
+    
+    fig.update_layout(
+        height=340,
+        template='plotly_white',
+        xaxis_tickangle=-15,
+        xaxis2_tickangle=-15
+    )
+    return fig
+
+
+def plot_stability_prediction(daily_series):
+    fig = go.Figure()
+    
+    fig.add_trace(
+        go.Scatter(
+            x=daily_series['days'],
+            y=daily_series['stability_score'],
+            name='稳定度',
+            mode='lines+markers',
+            line=dict(color=COLOR_PALETTE['secondary'], width=3),
+            marker=dict(size=6),
+            fill='tozeroy',
+            fillcolor=f'rgba(236, 72, 153, 0.1)'
+        )
+    )
+    
+    fig.add_hline(y=60, line_dash="dash", line_color=COLOR_PALETTE['warning'], 
+                  annotation_text="及格线(60分)")
+    fig.add_hline(y=80, line_dash="dash", line_color=COLOR_PALETTE['success'],
+                  annotation_text="优秀线(80分)")
+    
+    fig.update_layout(
+        title='作息稳定度提升预测',
+        height=300,
+        template='plotly_white',
+        yaxis_title='稳定度(分)',
+        yaxis_range=[0, 100]
+    )
+    return fig

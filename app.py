@@ -16,10 +16,26 @@ from analyzer import (
 from visualizer import (
     plot_sleep_trend, plot_nightwaking_heatmap, plot_naps_distribution,
     plot_stability_gauge, plot_stability_radar, plot_bedtime_vs_wakings,
-    plot_milk_analysis, plot_age_comparison, plot_weekly_pattern
+    plot_milk_analysis, plot_age_comparison, plot_weekly_pattern,
+    plot_intervention_comparison, plot_prediction_trend,
+    plot_dimension_effects, plot_stability_prediction
 )
 from advisor import generate_sleep_advice, export_report_to_excel
 from data_quality import analyze_data_quality, get_filtered_df
+from intervention_params import (
+    get_default_intervention_params, validate_params,
+    get_param_display, SIM_DURATION_OPTIONS, SOOTHING_STRATEGY_LEVELS
+)
+from prediction_engine import (
+    compute_baseline_metrics, compute_intervention_effects,
+    compute_combined_prediction, generate_daily_prediction_series,
+    generate_risk_warnings, compute_action_priority
+)
+from plan_generator import (
+    generate_daily_plan, generate_intervention_calendar,
+    generate_execution_summary, generate_baseline_summary
+)
+from intervention_exporter import export_intervention_plan_to_excel
 
 
 st.set_page_config(
@@ -212,7 +228,7 @@ with st.sidebar:
     st.subheader('📊 分析维度')
     analysis_mode = st.radio(
         '选择分析视角',
-        ['总览仪表盘', '深度模式分析', '分组对比分析', '睡眠节律建议'],
+        ['总览仪表盘', '深度模式分析', '分组对比分析', '睡眠节律建议', '睡眠干预模拟器'],
         index=0
     )
     
@@ -697,6 +713,290 @@ elif analysis_mode == '睡眠节律建议':
         - 各字段异常统计
         - 异常记录明细（原始值、修正值、是否纳入统计、异常原因、影响字段）
         """)
+
+elif analysis_mode == '睡眠干预模拟器':
+    st.markdown('### 🎯 睡眠干预方案模拟器')
+    st.caption('基于历史数据预测干预效果，生成个性化睡眠改善方案')
+    
+    baseline = compute_baseline_metrics(filtered_df)
+    
+    if 'intervention_params' not in st.session_state:
+        default_params = get_default_intervention_params(filtered_df, stats, stability, patterns)
+        st.session_state.intervention_params = default_params
+    
+    params = st.session_state.intervention_params
+    
+    col_param_editor, col_result_view = st.columns([1, 2])
+    
+    with col_param_editor:
+        st.markdown('<div class="section-title">⚙️ 干预参数设置</div>', unsafe_allow_html=True)
+        
+        with st.container(border=True):
+            st.markdown('**📅 模拟周期**')
+            sim_days = st.select_slider(
+                '选择模拟天数',
+                options=SIM_DURATION_OPTIONS,
+                value=params.get('sim_duration_days', 14),
+                help='选择未来多少天的干预模拟'
+            )
+            params['sim_duration_days'] = sim_days
+        
+        with st.container(border=True):
+            st.markdown('**🛌 目标入睡窗口**')
+            
+            bt_start_default = int(params.get('target_bedtime_start', -120))
+            bt_end_default = int(params.get('target_bedtime_end', -90))
+            
+            bt_start_h = max(18, min(23, 24 + bt_start_default // 60))
+            bt_start_m = bt_start_default % 60
+            bt_end_h = max(19, min(24, 24 + bt_end_default // 60))
+            bt_end_m = bt_end_default % 60
+            
+            col_bt_s, col_bt_e = st.columns(2)
+            with col_bt_s:
+                bt_start_str = st.time_input(
+                    '窗口开始',
+                    value=datetime(2024, 1, 1, bt_start_h, abs(bt_start_m) if bt_start_m < 0 else bt_start_m).time(),
+                    help='建议入睡窗口的最早时间'
+                )
+            with col_bt_e:
+                bt_end_str = st.time_input(
+                    '窗口结束',
+                    value=datetime(2024, 1, 1, bt_end_h, abs(bt_end_m) if bt_end_m < 0 else bt_end_m).time(),
+                    help='建议入睡窗口的最晚时间'
+                )
+            
+            bt_start_min = (bt_start_str.hour - 24) * 60 + bt_start_str.minute if bt_start_str.hour >= 20 else bt_start_str.hour * 60 + bt_start_str.minute
+            bt_end_min = (bt_end_str.hour - 24) * 60 + bt_end_str.minute if bt_end_str.hour >= 20 else bt_end_str.hour * 60 + bt_end_str.minute
+            
+            params['target_bedtime_start'] = int(bt_start_min)
+            params['target_bedtime_end'] = int(bt_end_min)
+        
+        with st.container(border=True):
+            st.markdown('**⏰ 最后一觉最晚结束时间**')
+            
+            ln_default = params.get('last_nap_deadline', 15 * 60)
+            ln_h = ln_default // 60
+            ln_m = ln_default % 60
+            
+            last_nap_time = st.time_input(
+                '选择时间',
+                value=datetime(2024, 1, 1, ln_h, ln_m).time(),
+                help='白天最后一觉必须在此时间前结束'
+            )
+            params['last_nap_deadline'] = int(last_nap_time.hour * 60 + last_nap_time.minute)
+        
+        with st.container(border=True):
+            st.markdown('**😴 白天小睡次数调整**')
+            nap_adj = st.slider(
+                '小睡次数变化',
+                min_value=-2,
+                max_value=2,
+                value=params.get('nap_count_adjustment', 0),
+                step=1,
+                help='相对于当前平均小睡次数的增减'
+            )
+            params['nap_count_adjustment'] = nap_adj
+            current_naps = baseline.get('avg_naps_count', 0)
+            target_naps = current_naps + nap_adj
+            st.caption(f'当前平均: {current_naps:.1f} 次 → 目标: {target_naps:.1f} 次')
+        
+        with st.container(border=True):
+            st.markdown('**🍼 睡前奶量变化**')
+            milk_pct = st.slider(
+                '奶量变化百分比',
+                min_value=-30,
+                max_value=30,
+                value=params.get('milk_change_pct', 0),
+                step=5,
+                help='相对于当前平均奶量的变化比例'
+            )
+            params['milk_change_pct'] = milk_pct
+            current_milk = baseline.get('avg_milk_ml', 0)
+            if current_milk and current_milk > 0:
+                target_milk = current_milk * (1 + milk_pct / 100)
+                st.caption(f'当前平均: {current_milk:.0f} ml → 目标: {target_milk:.0f} ml')
+            else:
+                st.caption('暂无奶量数据')
+        
+        with st.container(border=True):
+            st.markdown('**💆 夜醒安抚策略强度**')
+            strategy_options = list(SOOTHING_STRATEGY_LEVELS.keys())
+            strategy = st.select_slider(
+                '选择安抚策略',
+                options=strategy_options,
+                value=params.get('soothing_strategy', '适度安抚'),
+                help='不同策略对夜醒改善效果不同，风险也不同'
+            )
+            params['soothing_strategy'] = strategy
+            strat_info = SOOTHING_STRATEGY_LEVELS[strategy]
+            st.caption(f"强度: {'★' * strat_info['intensity']}{'☆' * (3 - strat_info['intensity'])}")
+            st.caption(strat_info['description'])
+        
+        st.session_state.intervention_params = params
+        
+        errors = validate_params(params)
+        if errors:
+            for err in errors:
+                st.warning(err)
+    
+    with col_result_view:
+        effects = compute_intervention_effects(filtered_df, baseline, params)
+        prediction = compute_combined_prediction(baseline, effects, params)
+        daily_series = generate_daily_prediction_series(baseline, effects, params)
+        risks = generate_risk_warnings(baseline, effects, params)
+        priorities = compute_action_priority(filtered_df, baseline, effects, params)
+        
+        param_display = get_param_display(params, stats)
+        
+        st.markdown('<div class="section-title">📊 干预前后对比预测</div>', unsafe_allow_html=True)
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            nw_change = prediction['changes']['night_waking_reduction_abs']
+            st.metric(
+                '夜醒次数',
+                f"{prediction['predicted']['avg_nightwakings']:.2f} 次",
+                delta=f"{nw_change:+.2f} 次 ({prediction['changes']['night_waking_reduction_pct']:+.1f}%)",
+                delta_color='inverse' if nw_change < 0 else 'normal'
+            )
+        with c2:
+            sleep_change = prediction['changes']['total_sleep_change_minutes']
+            st.metric(
+                '总睡眠时长',
+                f"{prediction['predicted']['avg_total_sleep_hours']:.1f} h",
+                delta=f"{sleep_change:+.0f} 分钟 ({prediction['changes']['total_sleep_change_pct']:+.1f}%)",
+                delta_color='normal' if sleep_change >= 0 else 'inverse'
+            )
+        with c3:
+            stab_gain = prediction['changes']['stability_gain']
+            st.metric(
+                '作息稳定度',
+                f"{prediction['predicted']['stability_score']:.0f} 分",
+                delta=f"{stab_gain:+.1f} 分",
+                delta_color='normal' if stab_gain >= 0 else 'inverse'
+            )
+        
+        st.plotly_chart(plot_intervention_comparison(prediction), use_container_width=True)
+        
+        tab1, tab2, tab3 = st.tabs(['📈 预测趋势', '🧩 维度分析', '⭐ 执行优先级'])
+        
+        with tab1:
+            st.plotly_chart(plot_prediction_trend(daily_series), use_container_width=True)
+            st.plotly_chart(plot_stability_prediction(daily_series), use_container_width=True)
+        
+        with tab2:
+            st.plotly_chart(plot_dimension_effects(prediction['dimension_effects']), use_container_width=True)
+            
+            st.markdown('#### 📋 各维度详情')
+            for key, dim in prediction['dimension_effects'].items():
+                risk_label = {'low': '🟢 低风险', 'medium': '🟡 中风险', 'high': '🔴 高风险'}.get(dim['risk_level'], '低风险')
+                with st.expander(f"{dim['icon']} {dim['name']} - {risk_label}"):
+                    st.write(f"夜醒改善贡献: {dim['nw_reduction_pct_contribution']:+.1f}%")
+                    st.write(f"睡眠时长贡献: {dim['sleep_change_contribution']:+.0f} 分钟")
+                    st.write(f"稳定度贡献: {dim['stability_contribution']:+.1f} 分")
+                    st.write(f"有效性: {dim['effectiveness']*100:.0f}%")
+        
+        with tab3:
+            st.markdown('#### 🏆 按影响程度排序')
+            for p in priorities:
+                priority_class = f"priority-{p['priority']}"
+                st.markdown(f"""
+                <div class="{priority_class}">
+                    <div style="font-weight:600">{p['icon']} {p['name']} - {p['priority_label']}</div>
+                    <div style="font-size:0.9em;margin-top:4px">
+                        夜醒影响: {p['night_waking_impact_pct']:.1f}% | 
+                        睡眠影响: {p['sleep_impact_minutes']:+.0f} 分钟 | 
+                        综合得分: {p['score']:.1f}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="section-title">⚠️ 风险提示</div>', unsafe_allow_html=True)
+        for risk in risks:
+            risk_color = {'high': '#DC2626', 'medium': '#F59E0B', 'low': '#22C55E'}.get(risk['level'], '#6B7280')
+            risk_bg = {'high': '#FEF2F2', 'medium': '#FFFBEB', 'low': '#F0FDF4'}.get(risk['level'], '#F8FAFC')
+            st.markdown(f"""
+            <div style="background:{risk_bg};padding:0.8rem 1rem;border-radius:8px;border-left:4px solid {risk_color};margin:0.4rem 0">
+                <div style="font-weight:600;color:{risk_color}">{risk['title']}</div>
+                <div style="font-size:0.9em;color:#374151;margin-top:4px">{risk['detail']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        daily_plan = generate_daily_plan(baseline, params, prediction, priorities)
+        calendar_df = generate_intervention_calendar(daily_plan)
+        execution_summary = generate_execution_summary(baseline, params, prediction, priorities, risks)
+        baseline_summary = generate_baseline_summary(baseline, stats)
+        
+        st.markdown('<div class="section-title">📅 干预日历表</div>', unsafe_allow_html=True)
+        
+        phase_colors = {
+            '适应期': '#F0F9FF',
+            '调整期': '#FEF3C7',
+            '巩固期': '#D1FAE5',
+            '稳定期': '#E0E7FF',
+        }
+        
+        cal_display = calendar_df.copy()
+        cal_display = cal_display[['日期', '天数', '阶段', '入睡窗口', '最后一觉截止', '小睡目标', '奶量目标', '预计夜醒']]
+        
+        def highlight_phase(row):
+            phase = row.get('阶段', '')
+            color = phase_colors.get(phase, '#FFFFFF')
+            return [f'background-color: {color}'] * len(row)
+        
+        st.dataframe(
+            cal_display.style.apply(highlight_phase, axis=1),
+            use_container_width=True,
+            hide_index=True,
+            height=380
+        )
+        
+        st.markdown('<div class="section-title">📄 导出干预计划</div>', unsafe_allow_html=True)
+        st.caption('导出完整的干预方案Excel报告，包含基线摘要、干预参数、预测结果、每日执行建议和风险说明')
+        
+        if st.button('📥 生成并下载干预方案报告', type='primary', use_container_width=True, key='export_intervention'):
+            with st.spinner('正在生成干预方案报告...'):
+                report_io = export_intervention_plan_to_excel(
+                    filtered_df, baseline, params, prediction,
+                    daily_plan, calendar_df, priorities, risks,
+                    execution_summary, baseline_summary, param_display
+                )
+                st.success('✅ 干预方案报告生成成功！')
+                
+                st.download_button(
+                    label='⬇️ 下载干预方案报告 (.xlsx)',
+                    data=report_io,
+                    file_name=f'宝宝睡眠干预方案_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    use_container_width=True
+                )
+        
+        with st.expander('👀 预览报告包含内容'):
+            st.markdown("""
+            **Sheet 1：干预计划概览**
+            - 基线摘要（当前睡眠状况）
+            - 干预参数设置
+            - 预测结果对比（干预前后）
+            - 各维度影响分析
+            - 执行优先级排序
+            - 风险提示
+            
+            **Sheet 2：干预日历表**
+            - 按天的执行日历
+            - 分阶段显示（适应期/调整期/巩固期/稳定期）
+            - 每日目标参数
+            
+            **Sheet 3：每日执行建议**
+            - 每天的详细执行指南
+            - 关键任务清单
+            - 注意事项
+            
+            **Sheet 4：风险与注意事项**
+            - 风险提示明细
+            - 执行注意事项
+            - 紧急情况处理
+            """)
 
 st.markdown('---')
 with st.expander('🔎 查看原始数据详情'):
