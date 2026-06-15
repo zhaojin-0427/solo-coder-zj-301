@@ -5,6 +5,22 @@ from data_processor import minutes_to_time_display
 
 SIM_DURATION_OPTIONS = [7, 14, 30]
 
+
+def bedtime_minutes_to_hm(minutes):
+    total = int(minutes)
+    if total < 0:
+        total += 1440
+    h = (total // 60) % 24
+    m = total % 60
+    return h, m
+
+
+def hm_to_bedtime_minutes(h, m):
+    total = h * 60 + m
+    if h >= 20:
+        total -= 1440
+    return total
+
 SOOTHING_STRATEGY_LEVELS = {
     '轻柔安抚': {'intensity': 1, 'description': '轻拍、安抚奶嘴、白噪音，不抱起'},
     '适度安抚': {'intensity': 2, 'description': '抱起安抚后放下，逐步延长响应时间'},
@@ -34,9 +50,22 @@ def get_default_intervention_params(filtered_df, stats, stability, patterns):
     else:
         default_soothing = '渐进式训练'
     
+    bt_start = int(round(bt_mean - 30))
+    bt_end = int(round(bt_mean + 15))
+    
+    bt_start_h, bt_start_m = bedtime_minutes_to_hm(bt_start)
+    bt_end_h, bt_end_m = bedtime_minutes_to_hm(bt_end)
+    
+    if bt_end_h == 24:
+        bt_end_h = 23
+        bt_end_m = 59
+    
+    bt_start = hm_to_bedtime_minutes(bt_start_h, bt_start_m)
+    bt_end = hm_to_bedtime_minutes(bt_end_h, bt_end_m)
+    
     return {
-        'target_bedtime_start': int(round(bt_mean - 30)),
-        'target_bedtime_end': int(round(bt_mean + 15)),
+        'target_bedtime_start': bt_start,
+        'target_bedtime_end': bt_end,
         'last_nap_deadline': int(round(min(last_nap_avg, 15 * 60))),
         'nap_count_adjustment': 0,
         'milk_change_pct': 0,

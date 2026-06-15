@@ -24,7 +24,8 @@ from advisor import generate_sleep_advice, export_report_to_excel
 from data_quality import analyze_data_quality, get_filtered_df
 from intervention_params import (
     get_default_intervention_params, validate_params,
-    get_param_display, SIM_DURATION_OPTIONS, SOOTHING_STRATEGY_LEVELS
+    get_param_display, SIM_DURATION_OPTIONS, SOOTHING_STRATEGY_LEVELS,
+    bedtime_minutes_to_hm, hm_to_bedtime_minutes
 )
 from prediction_engine import (
     compute_baseline_metrics, compute_intervention_effects,
@@ -747,27 +748,25 @@ elif analysis_mode == '睡眠干预模拟器':
             bt_start_default = int(params.get('target_bedtime_start', -120))
             bt_end_default = int(params.get('target_bedtime_end', -90))
             
-            bt_start_h = max(18, min(23, 24 + bt_start_default // 60))
-            bt_start_m = bt_start_default % 60
-            bt_end_h = max(19, min(24, 24 + bt_end_default // 60))
-            bt_end_m = bt_end_default % 60
+            bt_start_h, bt_start_m = bedtime_minutes_to_hm(bt_start_default)
+            bt_end_h, bt_end_m = bedtime_minutes_to_hm(bt_end_default)
             
             col_bt_s, col_bt_e = st.columns(2)
             with col_bt_s:
                 bt_start_str = st.time_input(
                     '窗口开始',
-                    value=datetime(2024, 1, 1, bt_start_h, abs(bt_start_m) if bt_start_m < 0 else bt_start_m).time(),
+                    value=datetime(2024, 1, 1, bt_start_h, bt_start_m).time(),
                     help='建议入睡窗口的最早时间'
                 )
             with col_bt_e:
                 bt_end_str = st.time_input(
                     '窗口结束',
-                    value=datetime(2024, 1, 1, bt_end_h, abs(bt_end_m) if bt_end_m < 0 else bt_end_m).time(),
+                    value=datetime(2024, 1, 1, bt_end_h, bt_end_m).time(),
                     help='建议入睡窗口的最晚时间'
                 )
             
-            bt_start_min = (bt_start_str.hour - 24) * 60 + bt_start_str.minute if bt_start_str.hour >= 20 else bt_start_str.hour * 60 + bt_start_str.minute
-            bt_end_min = (bt_end_str.hour - 24) * 60 + bt_end_str.minute if bt_end_str.hour >= 20 else bt_end_str.hour * 60 + bt_end_str.minute
+            bt_start_min = hm_to_bedtime_minutes(bt_start_str.hour, bt_start_str.minute)
+            bt_end_min = hm_to_bedtime_minutes(bt_end_str.hour, bt_end_str.minute)
             
             params['target_bedtime_start'] = int(bt_start_min)
             params['target_bedtime_end'] = int(bt_end_min)
@@ -840,7 +839,13 @@ elif analysis_mode == '睡眠干预模拟器':
             for err in errors:
                 st.warning(err)
     
+    params_valid = len(validate_params(params)) == 0
+    
     with col_result_view:
+        if not params_valid:
+            st.info('⚠️ 请先修正左侧参数中的错误，然后查看预测结果')
+            st.stop()
+        
         effects = compute_intervention_effects(filtered_df, baseline, params)
         prediction = compute_combined_prediction(baseline, effects, params)
         daily_series = generate_daily_prediction_series(baseline, effects, params)
