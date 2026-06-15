@@ -37,6 +37,18 @@ from plan_generator import (
     generate_execution_summary, generate_baseline_summary
 )
 from intervention_exporter import export_intervention_plan_to_excel
+from phase_analyzer import (
+    PHASE_MODES, generate_phase_options, filter_by_phase,
+    compute_phase_metrics, compare_phases, generate_phase_summary,
+    compute_intervention_vs_prediction
+)
+from phase_visualizer import (
+    plot_phase_metrics_comparison, plot_phase_trend_comparison,
+    plot_phase_nw_periods_comparison, plot_phase_radar,
+    plot_milk_nw_correlation_comparison, plot_prediction_vs_actual,
+    plot_phase_status_timeline
+)
+from phase_exporter import export_phase_review_to_excel
 
 
 st.set_page_config(
@@ -229,7 +241,7 @@ with st.sidebar:
     st.subheader('📊 分析维度')
     analysis_mode = st.radio(
         '选择分析视角',
-        ['总览仪表盘', '深度模式分析', '分组对比分析', '睡眠节律建议', '睡眠干预模拟器'],
+        ['总览仪表盘', '深度模式分析', '分组对比分析', '睡眠节律建议', '睡眠干预模拟器', '睡眠复盘与阶段对比中心'],
         index=0
     )
     
@@ -1002,6 +1014,331 @@ elif analysis_mode == '睡眠干预模拟器':
             - 执行注意事项
             - 紧急情况处理
             """)
+
+elif analysis_mode == '睡眠复盘与阶段对比中心':
+    st.markdown('### 📋 睡眠复盘与阶段对比中心')
+    st.caption('按自然周/月份/自定义阶段/干预前后生成睡眠复盘，对比不同阶段的指标变化，识别改善趋势')
+    
+    st.markdown("""
+    <style>
+    .phase-card {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        border-radius: 12px;
+        padding: 1rem 1.2rem;
+        margin: 0.5rem 0;
+        border-left: 4px solid #6366F1;
+    }
+    .phase-status-improving { border-color: #10B981; background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); }
+    .phase-status-regressing { border-color: #EF4444; background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); }
+    .phase-status-fluctuating { border-color: #F59E0B; background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); }
+    .phase-status-stable { border-color: #059669; background: linear-gradient(135deg, #ecfdf5 0%, #a7f3d0 100%); }
+    .phase-status-insufficient { border-color: #9CA3AF; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    phase_mode = st.selectbox(
+        '📅 阶段划分方式',
+        PHASE_MODES,
+        index=0,
+        help='选择如何划分对比阶段'
+    )
+    
+    custom_phases = []
+    pre_intervention_dates = None
+    post_intervention_dates = None
+    intervention_split_date = None
+    
+    if phase_mode == '自定义阶段':
+        st.markdown('<div class="section-title">✏️ 自定义阶段</div>', unsafe_allow_html=True)
+        
+        if 'custom_phase_count' not in st.session_state:
+            st.session_state.custom_phase_count = 2
+        
+        col_p1, col_p2 = st.columns([3, 1])
+        with col_p2:
+            phase_count = st.number_input(
+                '阶段数量', 
+                min_value=2, max_value=6, 
+                value=st.session_state.custom_phase_count
+            )
+            st.session_state.custom_phase_count = phase_count
+        
+        min_date = filtered_df['date'].min().date()
+        max_date = filtered_df['date'].max().date()
+        
+        for i in range(phase_count):
+            st.markdown(f'**阶段 {i+1}**')
+            c1, c2, c3 = st.columns([2, 2, 2])
+            with c1:
+                p_name = st.text_input(
+                    f'阶段名称',
+                    value=f'阶段{i+1}',
+                    key=f'phase_name_{i}'
+                )
+            with c2:
+                p_start = st.date_input(
+                    f'开始日期',
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    key=f'phase_start_{i}'
+                )
+            with c3:
+                p_end = st.date_input(
+                    f'结束日期',
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    key=f'phase_end_{i}'
+                )
+            custom_phases.append({
+                'name': p_name,
+                'start_date': p_start,
+                'end_date': p_end
+            })
+    
+    elif phase_mode == '干预前后':
+        st.markdown('<div class="section-title">🎯 干预阶段设置</div>', unsafe_allow_html=True)
+        
+        min_date = filtered_df['date'].min().date()
+        max_date = filtered_df['date'].max().date()
+        mid_date = min_date + (max_date - min_date) // 2
+        
+        intervention_split_date = st.date_input(
+            '选择干预开始日期',
+            value=mid_date,
+            min_value=min_date,
+            max_value=max_date,
+            help='此日期之前为干预前（基线），之后为干预后'
+        )
+        
+        mark_as_intervention = st.checkbox(
+            '⭐ 将「干预后」标记为干预阶段，与干预模拟器预测结果对比',
+            value=False,
+            help='启用后可选择干预模拟器的预测结果进行实际效果对比'
+        )
+    
+    phase_options = generate_phase_options(filtered_df, phase_mode, custom_phases)
+    
+    if phase_mode == '干预前后' and intervention_split_date:
+        for po in phase_options:
+            if po['type'] == 'pre_intervention':
+                po['start_date'] = min_date
+                po['end_date'] = intervention_split_date - timedelta(days=1)
+            elif po['type'] == 'post_intervention':
+                po['start_date'] = intervention_split_date
+                po['end_date'] = max_date
+    
+    if phase_options:
+        selected_phases = st.multiselect(
+            '选择要对比的阶段（至少选2个）',
+            options=[p['name'] for p in phase_options],
+            default=[p['name'] for p in phase_options[:min(2, len(phase_options))]]
+        )
+        
+        if len(selected_phases) >= 2:
+            selected_phase_configs = [p for p in phase_options if p['name'] in selected_phases]
+            selected_phase_configs.sort(key=lambda x: x.get('start_date') or datetime.min.date())
+            
+            phase_results = []
+            df_phases_dict = {}
+            
+            for pc in selected_phase_configs:
+                df_phase = filter_by_phase(filtered_df, pc['start_date'], pc['end_date'])
+                df_phases_dict[pc['name']] = df_phase
+                pr = compute_phase_metrics(df_phase, pc['name'])
+                phase_results.append(pr)
+            
+            comparison = compare_phases(phase_results)
+            summary = generate_phase_summary(phase_results, comparison)
+            
+            st.plotly_chart(plot_phase_status_timeline(phase_results), use_container_width=True)
+            
+            st.markdown('<div class="section-title">📊 各阶段核心指标对比</div>', unsafe_allow_html=True)
+            
+            metric_cols = st.columns(4)
+            display_metrics = [
+                ('avg_total_sleep_hours', '总睡眠', 'h/天'),
+                ('avg_night_sleep_hours', '夜间睡眠', 'h'),
+                ('avg_nightwakings', '夜醒次数', '次'),
+                ('bedtime_window_stability', '入睡稳定度', '分'),
+            ]
+            
+            for i, (m_key, m_label, m_unit) in enumerate(display_metrics):
+                with metric_cols[i]:
+                    vals = []
+                    for pr in phase_results:
+                        v = pr['metrics'].get(m_key, 0) or 0
+                        vals.append(round(v, 2))
+                    
+                    if len(vals) >= 2:
+                        delta = vals[-1] - vals[0]
+                        delta_pct = (delta / max(vals[0], 0.01)) * 100
+                        if m_key == 'avg_nightwakings':
+                            delta_color = 'inverse' if delta < 0 else 'normal'
+                        else:
+                            delta_color = 'normal' if delta >= 0 else 'inverse'
+                        
+                        st.metric(
+                            m_label,
+                            f'{vals[-1]} {m_unit}',
+                            delta=f'{delta:+.2f} ({delta_pct:+.1f}%)',
+                            delta_color=delta_color
+                        )
+                    else:
+                        st.metric(m_label, f'{vals[0]} {m_unit}' if vals else '-')
+            
+            st.plotly_chart(plot_phase_metrics_comparison(phase_results), use_container_width=True)
+            
+            st.markdown('---')
+            st.markdown('<div class="section-title">📈 趋势与维度分析</div>', unsafe_allow_html=True)
+            
+            tab1, tab2, tab3, tab4 = st.tabs([
+                '📊 阶段内趋势对照', '🔥 夜醒时段变化', 
+                '🎯 综合质量雷达', '🍼 奶量关联分析'
+            ])
+            
+            with tab1:
+                st.plotly_chart(plot_phase_trend_comparison(df_phases_dict, [pr['phase_name'] for pr in phase_results]), use_container_width=True)
+            
+            with tab2:
+                st.plotly_chart(plot_phase_nw_periods_comparison(phase_results), use_container_width=True)
+            
+            with tab3:
+                st.plotly_chart(plot_phase_radar(phase_results), use_container_width=True)
+            
+            with tab4:
+                st.plotly_chart(plot_milk_nw_correlation_comparison(phase_results), use_container_width=True)
+                st.caption('💡 相关系数为负表示奶量越多夜醒越少，是正常健康的关联')
+            
+            st.markdown('---')
+            
+            intervention_comp = None
+            if phase_mode == '干预前后':
+                post_phases = [pr for pr in phase_results if '干预后' in pr['phase_name']]
+                pre_phases = [pr for pr in phase_results if '干预前' in pr['phase_name']]
+                
+                if mark_as_intervention and post_phases and pre_phases:
+                    st.markdown('<div class="section-title">🎯 干预实际效果 vs 预测对比</div>', unsafe_allow_html=True)
+                    
+                    if 'intervention_params' in st.session_state and 'prediction_result' not in st.session_state:
+                        from prediction_engine import compute_baseline_metrics, compute_intervention_effects, compute_combined_prediction
+                        params = st.session_state.intervention_params
+                        pre_df = df_phases_dict.get(pre_phases[0]['phase_name'], filtered_df)
+                        baseline = compute_baseline_metrics(pre_df)
+                        effects = compute_intervention_effects(pre_df, baseline, params)
+                        prediction_result = compute_combined_prediction(baseline, effects, params)
+                        st.session_state.prediction_result = prediction_result
+                    
+                    if 'prediction_result' in st.session_state and post_phases:
+                        post_df = df_phases_dict.get(post_phases[0]['phase_name'])
+                        intervention_comp = compute_intervention_vs_prediction(post_df, st.session_state.prediction_result)
+                        
+                        st.plotly_chart(plot_prediction_vs_actual(intervention_comp), use_container_width=True)
+                        
+                        col_a, col_b, col_c = st.columns(3)
+                        for i, (key, label) in enumerate([
+                            ('nightwakings', '夜醒改善达成率'),
+                            ('total_sleep_hours', '睡眠增长达成率'),
+                            ('stability_score', '稳定度提升达成率')
+                        ]):
+                            data = intervention_comp.get(key, {})
+                            achievement = data.get('achievement_pct', 0)
+                            cols = [col_a, col_b, col_c]
+                            with cols[i]:
+                                if achievement >= 80:
+                                    st.success(f'✅ {label}: {achievement}%')
+                                elif achievement >= 50:
+                                    st.warning(f'📊 {label}: {achievement}%')
+                                else:
+                                    st.error(f'⚠️ {label}: {achievement}%')
+                    else:
+                        st.info('💡 请先在「睡眠干预模拟器」中设置参数并生成预测，然后返回此处进行对比')
+            
+            st.markdown('---')
+            st.markdown('<div class="section-title">📝 关键变化摘要与复盘建议</div>', unsafe_allow_html=True)
+            
+            overall_assessment = summary.get('overall_assessment', '')
+            if '改善' in overall_assessment:
+                status_class = 'phase-status-improving'
+            elif '倒退' in overall_assessment:
+                status_class = 'phase-status-regressing'
+            elif '波动' in overall_assessment:
+                status_class = 'phase-status-fluctuating'
+            elif '稳定' in overall_assessment:
+                status_class = 'phase-status-stable'
+            else:
+                status_class = 'phase-status-insufficient'
+            
+            st.markdown(f"""
+            <div class="phase-card {status_class}">
+                <div style="font-size:1.1rem;font-weight:600;margin-bottom:8px">{overall_assessment}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown('#### 🔍 关键变化')
+            for change in summary.get('key_changes', []):
+                st.markdown(f'- {change}')
+            
+            st.markdown('#### 💡 下一阶段建议')
+            for rec in summary.get('recommendations', []):
+                st.markdown(f'- {rec}')
+            
+            st.markdown('---')
+            st.markdown('<div class="section-title">📄 导出阶段复盘报告</div>', unsafe_allow_html=True)
+            
+            filters_info = {
+                '月龄阶段': filter_age,
+                '喂养方式': filter_feeding,
+                '是否长牙': filter_teething,
+                '天气': filter_weather,
+                '日期范围': f'{date_range[0]} ~ {date_range[1]}' if date_range else '全部',
+                '排除异常记录': '是' if exclude_anomalies else '否'
+            }
+            
+            if st.button('📥 生成并下载阶段复盘 Excel 报告', type='primary', use_container_width=True):
+                with st.spinner('正在生成阶段复盘报告...'):
+                    report_io = export_phase_review_to_excel(
+                        phase_results, comparison, summary,
+                        df_phases_dict, intervention_comp,
+                        data_quality_result, filters_info
+                    )
+                    st.success('✅ 阶段复盘报告生成成功！')
+                    
+                    st.download_button(
+                        label='⬇️ 下载阶段复盘报告 (.xlsx)',
+                        data=report_io,
+                        file_name=f'宝宝睡眠阶段复盘报告_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx',
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        use_container_width=True
+                    )
+            
+            with st.expander('👀 预览报告包含内容'):
+                st.markdown("""
+                **Sheet 1：阶段复盘概览**
+                - 阶段定义（名称、日期范围、记录天数、状态标记）
+                - 筛选条件说明
+                - 核心指标对比（各阶段睡眠、夜醒、作息等指标并列对比）
+                - 作息稳定度对比
+                - 夜醒时段分布对比
+                - 奶量与夜醒关联变化
+                - 干预实际效果与预测偏差（如启用干预对比）
+                
+                **Sheet 2：趋势对比数据**
+                - 各阶段每日原始数据（日期、睡眠时长、夜醒、奶量等）
+                - 用于生成趋势对照图的数据明细
+                
+                **Sheet 3：关键变化与建议**
+                - 整体评估（改善中/反复波动/阶段倒退/稳定良好等）
+                - 关键变化摘要
+                - 下一阶段建议
+                - 详细指标变化对比
+                - 异常记录影响说明
+                """)
+        else:
+            st.info('👆 请至少选择2个阶段进行对比分析')
+    else:
+        st.warning('当前筛选条件下数据不足以生成阶段，请调整筛选或增加数据记录')
 
 st.markdown('---')
 with st.expander('🔎 查看原始数据详情'):
