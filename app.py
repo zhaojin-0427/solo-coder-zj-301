@@ -49,6 +49,7 @@ from phase_visualizer import (
     plot_phase_status_timeline
 )
 from phase_exporter import export_phase_review_to_excel
+from care_routes import render_care_center
 
 
 st.set_page_config(
@@ -241,7 +242,7 @@ with st.sidebar:
     st.subheader('📊 分析维度')
     analysis_mode = st.radio(
         '选择分析视角',
-        ['总览仪表盘', '深度模式分析', '分组对比分析', '睡眠节律建议', '睡眠干预模拟器', '睡眠复盘与阶段对比中心'],
+        ['总览仪表盘', '深度模式分析', '分组对比分析', '睡眠节律建议', '睡眠干预模拟器', '睡眠复盘与阶段对比中心', '照护协同与交接记录中心'],
         index=0
     )
     
@@ -1339,6 +1340,12 @@ elif analysis_mode == '睡眠复盘与阶段对比中心':
             st.info('👆 请至少选择2个阶段进行对比分析')
     else:
         st.warning('当前筛选条件下数据不足以生成阶段，请调整筛选或增加数据记录')
+
+elif analysis_mode == '照护协同与交接记录中心':
+    render_care_center(
+        filtered_df, processed_df, exclude_anomalies,
+        filter_age, filter_feeding, filter_teething, filter_weather, date_range
+    )
 
 st.markdown('---')
 with st.expander('🔎 查看原始数据详情'):
